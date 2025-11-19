@@ -1,0 +1,229 @@
+# FuzzHound - API Fuzz 测试工具配置文件
+
+# 日志配置
+logging:
+  enabled: true  # 是否启用日志
+  log_dir: "logs"  # 日志目录
+  log_file: "fuzzhound.log"  # 日志文件名
+  level: "INFO"  # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  max_bytes: 10485760  # 单个日志文件最大大小（字节，默认 10MB）
+  backup_count: 5  # 保留的日志文件数量
+
+# 调试配置
+debug:
+  enabled: false  # 是否启用调试模式（使用 --debug 参数启用）
+  verbose: false  # 是否在控制台显示详细的请求/响应信息（包括参数、请求体、响应体等）
+  save_requests: false  # 是否保存每个请求的详细信息到 logs/debug/ 目录
+  save_responses: false  # 是否保存每个响应的详细信息到 logs/debug/ 目录
+  # 注意：使用 --debug 参数会自动启用 verbose、save_requests 和 save_responses
+
+# 基础配置
+target:
+  base_url: "http://example.com"  # 目标 URL
+  api_path: "/api-docs"  # API 文档路径 (如: /api-docs, /v2/api-docs, /swagger-ui.html)
+  custom_prefix: ""  # 自定义目录前缀 (如: /xxx/aaa/)
+  timeout: 10  # 请求超时时间（秒）
+  verify_ssl: false  # 是否验证 SSL 证书
+
+# 代理配置
+proxy:
+  enabled: false  # 是否启用代理
+  http: ""  # HTTP 代理 (如: http://127.0.0.1:8080)
+  https: ""  # HTTPS 代理 (如: http://127.0.0.1:8080)
+  # 常用代理示例:
+  # Burp Suite: http://127.0.0.1:8080
+  # Charles: http://127.0.0.1:8888
+  # Fiddler: http://127.0.0.1:8888
+  # mitmproxy: http://127.0.0.1:8080
+
+# 认证配置
+auth:
+  enabled: false  # 是否启用认证
+  type: "bearer"  # 认证类型: bearer, basic, api_key, cookie
+  token: ""  # Bearer Token 或 API Key
+  username: ""  # Basic Auth 用户名
+  password: ""  # Basic Auth 密码
+  header_name: "Authorization"  # 自定义 Header 名称
+  cookie: ""  # Cookie 字符串 (如: "session=xxx; token=yyy")
+
+# 输出配置
+output:
+  html_report: "report.html"  # HTML 报告文件名
+  save_requests: true  # 是否保存请求包
+  save_responses: true  # 是否保存响应包
+  output_dir: "output"  # 输出目录
+  verbose: true  # 是否显示详细信息
+  color: true  # 是否使用彩色输出
+
+# 请求配置
+request:
+  # 自定义请求头（注意：User-Agent 会自动从 user_agents.txt 随机选择，无需在此设置）
+  headers: {}
+    # 如果需要添加自定义请求头，可以在这里添加，例如：
+  #   {
+  #   X-Custom-Header: "custom-value"
+  # }
+  threads: 5  # 并发线程数
+  delay: 1.5  # 请求间延迟（秒）
+  retry: 1  # 失败重试次数
+  double_check: true  # 是否进行双重检查（先访问原始URL，再访问添加参数后的URL）
+  random_ua: true  # 是否使用随机 User-Agent（默认: true）
+  # 枚举参数测试配置（针对 API 文档中定义了 enum 枚举值的参数）
+  # 例如：sourceDB 参数有 enum: [InterPro, pfam, smart, ...]
+  enum_test_limit: 0  # 每个枚举参数测试的值数量：0=测试所有枚举值（默认），N=只测试前N个值
+
+# 过滤配置
+filter:
+  status_codes: []  # 只显示指定状态码的结果（空表示全部）
+  min_response_length: 0  # 最小响应长度
+  max_response_length: 0  # 最大响应长度（0表示不限制）
+
+# 黑名单配置
+blacklist:
+  enabled: true  # 是否启用黑名单
+  ignore_blacklist: false  # 是否忽略黑名单（强制测试所有接口，包括黑名单中的）
+  methods: ["DELETE"]  # 黑名单中的 HTTP 方法（不会被测试）
+  paths: [""]  # 黑名单中的路径（精确匹配）
+  path_patterns: []  # 黑名单中的路径正则表达式
+  # 常见的危险路径示例：
+  # - /error
+  # - /actuator/shutdown
+  # - /admin/delete
+  # - /api/user/delete
+  #
+  # 使用正则表达式匹配多个路径示例：
+  # path_patterns: ["^/admin/.*", ".*delete.*", "^/actuator/shutdown$"]
+
+# Fuzz 检测配置（通用，适用于所有类型的Fuzz）
+# 检测原理：通过对比基准响应和Fuzz响应的差异来判断Fuzz是否有效
+# 评分机制：
+#   - 状态码变化（最高50分）：从非成功码变为成功码+50分，从非认证码变为认证码+40分
+#   - 响应长度变化（最高30分）：根据响应包长度分高
+#     * 响应增加且>1KB: +30分（可能返回详细数据）
+#     * 响应增加且>500B: +25分
+#     * 响应增加且较小: +20分
+#     * 响应减少: +5分（价值较低）
+#     * 如果都是认证错误(401/403)，以上分数减半（避免误报）
+#   - 响应时间变化（最高10分）：时间增加超过阈值+10分
+#   - 响应内容关键字（最高20分）：包含成功关键字+20分，包含失败关键字-10分
+# 判断等级：≥70分=高度可疑，≥50分=可能有效，<50分=可能无效
+fuzz_detection:
+  enabled: true  # 是否启用智能检测
+  success_status_codes: [200, 201, 202]  # 成功状态码
+  auth_status_codes: [401, 403]  # 认证状态码（只有从非认证码变为认证码才加分，避免误报）
+  length_diff_threshold: 20  # 响应长度差异阈值（百分比）
+  time_diff_threshold: 2.0  # 响应时间差异阈值（倍数）
+  success_keywords: ["success", "data", "user", "profile", "email", "id", "token"]  # 成功关键字
+  failure_keywords: ["not found", "invalid", "error", "does not exist", "fail", "wrong"]  # 失败关键字
+  score_threshold_possible: 50  # 可能有效的评分阈值
+  score_threshold_likely: 70  # 高度可疑的评分阈值
+  # Fuzz 结果状态码筛选（只显示指定状态码的结果）
+  # 空列表 [] 表示显示所有状态码
+  # 默认显示有价值的状态码：200(成功), 500(服务器错误), 403(权限), 401(认证), 302(重定向)
+  filter_status_codes: [200, 500, 403, 401, 302]
+  # Fuzz 前置筛选（只对指定状态码的API进行Fuzz测试）
+  # 空列表 [] 表示对所有API进行Fuzz（默认）
+  # 例如：[200] 表示只对普通测试返回200状态码的API进行Fuzz
+  fuzz_filter_codes: []
+
+# 用户名 Fuzz 配置
+fuzz_username:
+  enabled: false  # 是否启用用户名 Fuzz（使用 --fuser 参数启用）
+  username_file: "config/usernames.txt"  # 用户名字典文件路径
+  keywords: ["name", "user", "username", "account", "login", "email", "uid", "userid"]  # 匹配的参数名关键字（不区分大小写）
+  count: 15  # 默认随机挑选的用户名数量（0 或 "all" 表示使用全部字典）
+
+# 密码 Fuzz 配置
+fuzz_password:
+  enabled: false  # 是否启用密码 Fuzz（使用 --fpass 参数启用）
+  password_file: "config/top100_password.txt"  # 密码字典文件路径
+  keywords: ["pass", "password", "pwd", "passwd", "secret", "credential"]
+  count: 15  # 默认随机挑选的密码数量（0 或 "all" 表示使用全部字典）
+
+# 数字型参数 Fuzz 配置
+fuzz_number:
+  enabled: false  # 是否启用数字型 Fuzz（使用 --fnumber 参数启用）
+  mode: "random"  # Fuzz 模式: random（随机）, range（范围遍历）
+  default_range_start: 1  # 默认范围起始值
+  default_range_end: 1000  # 默认范围结束值
+  default_count: 15  # 默认随机挑选数量
+  range_start: 1  # 用户指定的范围起始值
+  range_end: 100  # 用户指定的范围结束值
+  count: 15  # 用户指定的数量
+
+# SQL注入 Fuzz 配置
+fuzz_sql:
+  enabled: false  # 是否启用SQL注入 Fuzz（使用 --fpsql 参数启用）
+  payload_file: "config/sql_payloads.txt"  # SQL注入payload文件路径（共155个payload）
+  error_file: "config/sql_errors.txt"  # SQL错误特征文件路径
+  mode: "smart"  # Fuzz模式: basic（10个）, smart（20个或自定义）, full（155个全部）
+  detect_errors: true  # 是否检测SQL错误信息
+  detect_diff: true  # 是否进行响应差异分析
+  diff_threshold: 100  # 响应差异阈值（字节）
+  max_payloads: 20  # 每个参数最多测试的payload数量（仅在smart模式生效，可通过--sql-payloads覆盖）
+  skip_encoded: false  # 是否跳过已编码的参数
+  test_numeric: true  # 是否测试数字型参数
+  test_string: true  # 是否测试字符串型参数
+
+  # 参数名称关键字（包含这些关键字的参数会被测试）
+  keywords:
+    - "id"
+    - "user"
+    - "name"
+    - "query"
+    - "search"
+    - "keyword"
+    - "filter"
+    - "sort"
+    - "order"
+    - "where"
+    - "sql"
+    - "cmd"
+    - "exec"
+
+# 默认参数值配置
+default_values:
+  # 数字型参数默认值
+  integer: 1  # integer, int, long 类型的默认值
+  number: 1.0  # number, float, double 类型的默认值
+
+  # 字符型参数默认值
+  string: "test"  # 普通字符串的默认值
+  boolean: true  # 布尔类型的默认值
+
+  # 日期时间型参数默认值
+  # 支持的格式：
+  # - date: 日期格式 (YYYY-MM-DD)
+  # - datetime: 日期时间格式 (YYYY-MM-DD HH:MM:SS)
+  # - timestamp: Unix时间戳（秒）
+  # - iso8601: ISO 8601格式 (YYYY-MM-DDTHH:MM:SSZ)
+  date: "2024-01-01"  # 日期类型的默认值
+  datetime: "2024-01-01 00:00:00"  # 日期时间类型的默认值
+  date-time: "2024-01-01T00:00:00Z"  # ISO 8601 格式（OpenAPI 3.0）
+  timestamp: 1704067200  # Unix时间戳（2024-01-01 00:00:00 UTC）
+
+  # 复杂类型默认值
+  array: []  # 数组类型的默认值
+  object: {}  # 对象类型的默认值
+  file: "test_file"  # 文件类型的默认值（特殊标记，由 request_builder 处理）
+
+  # 根据参数名称智能推断的默认值（优先级高于类型默认值）
+  name_based:
+    id: 1
+    name: "test"
+    email: "test@example.com"
+    phone: "13800138000"
+    url: "http://example.com"
+    time: "2024-01-01 00:00:00"
+    date: "2024-01-01"
+    datetime: "2024-01-01 00:00:00"
+    timestamp: 1704067200
+    created: "2024-01-01 00:00:00"
+    updated: "2024-01-01 00:00:00"
+    start: "2024-01-01"
+    end: "2024-12-31"
+    page: 1
+    size: 10
+    limit: 10
+    status: 1
+

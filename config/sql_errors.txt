@@ -1,0 +1,180 @@
+# SQL错误特征库 - 用于检测SQL注入漏洞
+
+# MySQL错误
+You have an error in your SQL syntax
+MySQL server version for the right syntax to use
+mysql_fetch
+mysql_num_rows
+mysql_query
+mysql_error
+Warning: mysql
+Unclosed quotation mark after the character string
+Incorrect syntax near
+Syntax error in string in query expression
+Data type mismatch in criteria expression
+Microsoft OLE DB Provider for ODBC Drivers
+Microsoft OLE DB Provider for SQL Server
+Unclosed quotation mark before the character string
+Invalid column name
+Column count doesn't match value count
+Operand should contain 1 column
+Unknown column
+Table doesn't exist
+Column cannot be null
+
+# PostgreSQL错误
+ERROR: syntax error at or near
+pg_query
+pg_exec
+pg_num_rows
+PostgreSQL query failed
+supplied argument is not a valid PostgreSQL result
+unterminated quoted string
+invalid input syntax
+column does not exist
+relation does not exist
+operator does not exist
+
+# Oracle错误
+ORA-00933
+ORA-00936
+ORA-00942
+ORA-01756
+ORA-01789
+ORA-01790
+ORA-01858
+ORA-00904
+ORA-00920
+ORA-00921
+ORA-00923
+ORA-00932
+ORA-00911
+ORA-00918
+ORA-00917
+ORA-00913
+ORA-00907
+ORA-00906
+ORA-00903
+ORA-00902
+ORA-00901
+ORA-00900
+oracle.jdbc
+java.sql.SQLException
+
+# SQL Server错误
+Microsoft SQL Native Client error
+ODBC SQL Server Driver
+ODBC Driver
+SQLServer JDBC Driver
+com.microsoft.sqlserver.jdbc.SQLServerException
+Incorrect syntax near
+Unclosed quotation mark
+String or binary data would be truncated
+Cannot insert the value NULL
+Conversion failed
+Invalid object name
+Invalid column name
+The multi-part identifier
+Could not find stored procedure
+Line 1: Incorrect syntax near
+
+# SQLite错误
+SQLite3::SQLException
+sqlite3.OperationalError
+SQLite error
+unrecognized token
+no such table
+no such column
+near "syntax error"
+SQL logic error
+
+# 通用SQL错误
+SQL syntax
+syntax error
+database error
+DB Error
+SQLSTATE
+SQL Error
+Query failed
+Invalid query
+Unexpected end of command
+quoted string not properly terminated
+unterminated string literal
+missing expression
+missing right parenthesis
+invalid identifier
+ambiguous column name
+division by zero
+numeric value out of range
+value too large
+string data right truncation
+integrity constraint violation
+foreign key constraint
+unique constraint
+check constraint
+not null constraint
+
+# 中文错误提示
+数据库出错
+数据库错误
+SQL错误
+语法错误
+附近有语法错误
+引号不完整
+列不存在
+表不存在
+字段不存在
+查询失败
+数据类型不匹配
+违反完整性约束
+违反唯一约束
+违反外键约束
+不能为空
+转换失败
+
+# ASP/ASP.NET错误
+Microsoft JET Database Engine error
+ADODB.Field error
+ADODB.Recordset
+ASP.NET_SessionId
+System.Data.SqlClient
+System.Data.OleDb
+
+# PHP错误
+Warning: mysql
+Warning: mysqli
+Warning: pg_
+PDOException
+mysqli_error
+pg_last_error
+sqlite_error_string
+
+# Java错误
+java.sql.SQLException
+org.hibernate.exception
+org.springframework.jdbc
+com.mysql.jdbc.exceptions
+oracle.jdbc.driver
+
+# Python错误
+OperationalError
+ProgrammingError
+IntegrityError
+DatabaseError
+pymysql.err
+psycopg2.errors
+sqlite3.Error
+
+# Node.js错误
+SequelizeDatabaseError
+MongoError
+Error: ER_
+mysql: error
+
+# 其他特征
+SQLSTATE[
+SQL command not properly ended
+missing FROM-clause entry
+aggregate functions are not allowed
+subquery must return only one column
+
