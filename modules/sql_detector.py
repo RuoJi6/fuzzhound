@@ -7,6 +7,7 @@ SQL注入检测模块
 import re
 import os
 import logging
+import difflib
 from typing import List, Dict, Tuple, Optional
 
 logger = logging.getLogger('fuzzhound.sql_detector')
@@ -122,6 +123,14 @@ class SQLDetector:
 
         return len(matched_errors) > 0, matched_errors
     
+    def calculate_similarity(self, text1: str, text2: str) -> float:
+        """计算两个文本的相似度 (0.0 - 1.0)"""
+        if not text1 and not text2:
+            return 1.0
+        if not text1 or not text2:
+            return 0.0
+        return difflib.SequenceMatcher(None, text1, text2).ratio()
+
     def analyze_response_diff(self, baseline_response: dict, fuzz_response: dict) -> Dict:
         """分析响应差异
         
@@ -140,7 +149,8 @@ class SQLDetector:
             'status_code_diff': False,
             'length_diff': 0,
             'content_diff': False,
-            'significant_diff': False
+            'significant_diff': False,
+            'similarity': 1.0
         }
         
         # 状态码差异
@@ -151,16 +161,27 @@ class SQLDetector:
             result['has_diff'] = True
         
         # 响应长度差异
-        baseline_body = baseline_response.get('body', '')
-        fuzz_body = fuzz_response.get('body', '')
+        baseline_body = str(baseline_response.get('body', ''))
+        fuzz_body = str(fuzz_response.get('body', ''))
         baseline_length = len(baseline_body)
         fuzz_length = len(fuzz_body)
         length_diff = abs(baseline_length - fuzz_length)
         result['length_diff'] = length_diff
         
+        # 计算相似度
+        similarity = self.calculate_similarity(baseline_body, fuzz_body)
+        result['similarity'] = similarity
+        
         # 判断是否为显著差异
+        # 1. 长度差异超过阈值
         diff_threshold = self.sql_config.get('diff_threshold', 100)
         if length_diff > diff_threshold:
+            result['significant_diff'] = True
+            result['has_diff'] = True
+            
+        # 2. 相似度低于阈值 (例如 0.7)
+        similarity_threshold = self.sql_config.get('similarity_threshold', 0.7)
+        if similarity < similarity_threshold:
             result['significant_diff'] = True
             result['has_diff'] = True
         
@@ -193,6 +214,11 @@ class SQLDetector:
         diff_result = detection_result.get('diff_result', {})
         if diff_result.get('significant_diff', False):
             score += 30
+            
+            # 如果相似度非常低 (< 0.5)，额外加分
+            similarity = diff_result.get('similarity', 1.0)
+            if similarity < 0.5:
+                score += 20
         
         # 状态码变化 +10分
         if diff_result.get('status_code_diff', False):

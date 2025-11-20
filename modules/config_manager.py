@@ -7,7 +7,9 @@
 import sys
 import yaml
 from rich.console import Console
+from pydantic import ValidationError
 from modules.fuzz_config import process_fuzz_args
+from modules.config_model import AppConfig
 
 console = Console()
 
@@ -16,7 +18,45 @@ def load_config(config_file):
     """加载配置文件"""
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
+            yaml_data = yaml.safe_load(f) or {}
+            
+        # 使用 Pydantic 验证并填充默认值
+        # 注意：这里我们允许部分字段缺失，由 Pydantic 填充默认值
+        # 但对于必需字段（如 target.base_url），如果 YAML 中没有且没有默认值，会在 validate_config 中检查
+        # 或者我们可以先创建一个只有部分数据的 dict，后续合并命令行参数后再验证
+        
+        # 为了支持命令行参数覆盖，我们这里先不进行严格验证，只做基础结构填充
+        # 但 AppConfig 定义了 target 是必需的，所以如果 YAML 空的话会报错
+        # 我们先返回 yaml_data，在 merge_cli_args 之后再做最终验证
+        
+        # 不过，为了让 merge_cli_args 能安全地访问嵌套字典，我们需要确保结构存在
+        # 我们可以用 AppConfig 来填充默认结构，但允许缺失必需字段（通过 construct 或 partial）
+        # 但 Pydantic v2 没有 construct 了 (有 model_construct 但不验证)
+        
+        # 策略：先返回原始 dict，但在 merge_cli_args 中要小心 key error
+        # 或者，我们可以定义一个 "PartialAppConfig" 所有字段可选？
+        # 不，最好的办法是：
+        # 1. 加载 YAML
+        # 2. 确保顶层 key 存在
+        
+        config = yaml_data
+        
+        # 确保基本结构存在，避免 merge_cli_args 报错
+        if 'target' not in config: config['target'] = {}
+        if 'request' not in config: config['request'] = {}
+        if 'auth' not in config: config['auth'] = {}
+        if 'proxy' not in config: config['proxy'] = {}
+        if 'blacklist' not in config: config['blacklist'] = {}
+        if 'fuzz_username' not in config: config['fuzz_username'] = {}
+        if 'fuzz_password' not in config: config['fuzz_password'] = {}
+        if 'fuzz_number' not in config: config['fuzz_number'] = {}
+        if 'fuzz_sql' not in config: config['fuzz_sql'] = {}
+        if 'fuzz_detection' not in config: config['fuzz_detection'] = {}
+        if 'output' not in config: config['output'] = {}
+        if 'logging' not in config: config['logging'] = {}
+        if 'debug' not in config: config['debug'] = {}
+        if 'default_values' not in config: config['default_values'] = {}
+        
         return config
     except Exception as e:
         console.print(f"[red]✗ 加载配置文件失败: {e}[/red]")
@@ -25,17 +65,28 @@ def load_config(config_file):
 
 def validate_config(config):
     """验证配置文件"""
-    required_fields = ['target', 'output']
-    for field in required_fields:
-        if field not in config:
-            console.print(f"[red]✗ 配置文件缺少必需字段: {field}[/red]")
-            return False
-    
-    if 'base_url' not in config['target']:
-        console.print(f"[red]✗ 配置文件缺少必需字段: target.base_url[/red]")
+    """验证配置文件"""
+    try:
+        # 使用 Pydantic 进行最终验证
+        # 这会检查类型、必需字段和默认值
+        app_config = AppConfig(**config)
+        
+        # 将验证后的配置（包含默认值）转回 dict，更新原 config
+        # 这样后续代码可以使用完整的配置（包含 Pydantic 填充的默认值）
+        validated_dict = app_config.model_dump()
+        config.update(validated_dict)
+        
+        return True
+    except ValidationError as e:
+        console.print(f"[red]✗ 配置文件验证失败:[/red]")
+        for error in e.errors():
+            loc = " -> ".join(str(x) for x in error['loc'])
+            msg = error['msg']
+            console.print(f"  - [yellow]{loc}[/yellow]: {msg}")
         return False
-    
-    return True
+    except Exception as e:
+        console.print(f"[red]✗ 验证配置时发生未知错误: {e}[/red]")
+        return False
 
 
 def merge_cli_args(config, args):

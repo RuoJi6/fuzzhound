@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 测试处理器模块
-包含普通测试和 Fuzz 测试的处理函数
+包含普通测试和 Fuzz 测试的处理函数 (AsyncIO 版本)
 """
 
-import time
+import asyncio
 import logging
 
 logger = logging.getLogger('fuzzhound')
@@ -14,7 +14,7 @@ logger = logging.getLogger('fuzzhound')
 def create_normal_test_handler(config, request_builder, request_sender, reporter,
                                fuzz_detector, any_fuzz_enabled, delay, progress, print_lock, api_status_map, interrupted):
     """创建普通测试处理函数
-
+    
     Args:
         config: 配置字典
         request_builder: 请求构建器
@@ -27,12 +27,12 @@ def create_normal_test_handler(config, request_builder, request_sender, reporter
         print_lock: 打印锁
         api_status_map: API 状态码映射字典
         interrupted: 中断标志
-
+        
     Returns:
-        function: 处理函数
+        function: 异步处理函数
     """
-    def process_api_normal(api):
-        """处理单个 API 的普通测试（线程安全）"""
+    async def process_api_normal(api):
+        """处理单个 API 的普通测试（异步）"""
         api_results = []
         double_check = config['request'].get('double_check', True)
 
@@ -83,9 +83,9 @@ def create_normal_test_handler(config, request_builder, request_sender, reporter
 
                 # 请求延迟
                 if delay > 0:
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
 
-                result = request_sender.send(req)
+                result = await request_sender.send(req)
                 api_results.append(result)
 
                 # 设置基准响应（使用第一个正常请求作为基准，供后续Fuzz使用）
@@ -115,7 +115,7 @@ def create_normal_test_handler(config, request_builder, request_sender, reporter
 def create_fuzz_test_handler(config, request_sender, reporter, fuzz_detector,
                              sql_detector, any_fuzz_enabled, delay, print_lock, interrupted):
     """创建 Fuzz 测试处理函数
-
+    
     Args:
         config: 配置字典
         request_sender: 请求发送器
@@ -126,21 +126,21 @@ def create_fuzz_test_handler(config, request_sender, reporter, fuzz_detector,
         delay: 请求延迟
         print_lock: 打印锁
         interrupted: 中断标志
-
+        
     Returns:
-        function: 处理函数
+        function: 异步处理函数
     """
-    def process_single_fuzz_request(req, fuzz_progress_obj):
-        """处理单个 Fuzz 请求（线程安全）"""
+    async def process_single_fuzz_request(req, fuzz_progress_obj):
+        """处理单个 Fuzz 请求（异步）"""
         try:
             # 检查是否被中断
             if interrupted.is_set():
                 return None
             # 请求延迟
             if delay > 0:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
 
-            result = request_sender.send(req)
+            result = await request_sender.send(req)
 
             # 分析 Fuzz 结果（所有类型的Fuzz都使用相同的检测逻辑）
             fuzz_type = req.get('fuzz_type', 'normal')
@@ -202,4 +202,3 @@ def create_fuzz_test_handler(config, request_sender, reporter, fuzz_detector,
             return None
     
     return process_single_fuzz_request
-

@@ -47,6 +47,33 @@ class Reporter:
         self.debug_config = config.get('debug', {})
         self.debug_enabled = self.debug_config.get('enabled', False)
     
+    def _generate_curl_command(self, request_data):
+        """生成 cURL 命令"""
+        method = request_data.get('method', 'GET')
+        url = request_data.get('url', '')
+        headers = request_data.get('headers', {})
+        body = request_data.get('body', None)
+        
+        # 构建命令
+        parts = [f"curl -X {method}"]
+        
+        # 添加 headers
+        for k, v in headers.items():
+            parts.append(f"-H '{k}: {v}'")
+            
+        # 添加 body
+        if body:
+            import json
+            if isinstance(body, dict):
+                body_str = json.dumps(body)
+            else:
+                body_str = str(body)
+            parts.append(f"-d '{body_str}'")
+            
+        parts.append(f"'{url}'")
+        
+        return " ".join(parts)
+    
     def format_result(self, result):
         """格式化单个结果为字符串"""
         status_code = result['status_code']
@@ -816,6 +843,9 @@ class Reporter:
             if param_info:
                 description_html += f'<div class="param-info"><strong>📝 参数详情:</strong> {self._escape_html(param_info)}</div>'
 
+            # 生成 cURL 命令
+            curl_cmd = self._generate_curl_command(result['request'])
+
             # 转义详情数据用于 data 属性
             details_data = {
                 'request': result['raw_request'],
@@ -823,7 +853,8 @@ class Reporter:
                 'response': result['raw_response'],
                 'url': url,
                 'method': method,
-                'status': status_code
+                'status': status_code,
+                'curl': curl_cmd
             }
 
             import json
@@ -857,7 +888,11 @@ class Reporter:
         <div class="details-panel-content">
             <div class="details-section">
                 <h4>📤 请求包</h4>
+                <div style="margin-bottom: 10px;">
+                    <button class="toggle-btn" onclick="copyCurl()">📋 复制 cURL</button>
+                </div>
                 <pre id="detailsRequest"></pre>
+                <input type="hidden" id="detailsCurl">
             </div>
             <div class="details-section">
                 <h4>📊 响应头</h4>
@@ -894,6 +929,7 @@ class Reporter:
             document.getElementById('detailsRequest').textContent = detailsData.request;
             document.getElementById('detailsHeaders').textContent = detailsData.headers;
             document.getElementById('detailsResponse').textContent = detailsData.response;
+            document.getElementById('detailsCurl').value = detailsData.curl;
 
             // 显示面板
             document.getElementById('detailsPanel').classList.add('show');
@@ -1032,6 +1068,16 @@ class Reporter:
             link.href = URL.createObjectURL(blob);
             link.download = 'api_fuzz_report.json';
             link.click();
+        }
+
+        function copyCurl() {
+            const curlCmd = document.getElementById('detailsCurl').value;
+            navigator.clipboard.writeText(curlCmd).then(() => {
+                alert('cURL 命令已复制到剪贴板');
+            }).catch(err => {
+                console.error('无法复制 cURL 命令: ', err);
+                alert('复制失败，请手动复制');
+            });
         }
     </script>
 </body>

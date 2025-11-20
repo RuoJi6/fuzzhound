@@ -12,7 +12,9 @@ import re
 import logging
 import yaml
 from urllib.parse import urljoin
+from typing import List, Dict, Any, Optional, Union
 from rich.console import Console
+import os
 
 # 禁用 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -24,7 +26,7 @@ logger = logging.getLogger('fuzzhound.api_parser')
 class APIParser:
     """API 解析器"""
     
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.base_url = config['target']['base_url']
         self.api_path = config['target']['api_path']
@@ -41,11 +43,14 @@ class APIParser:
 
         # 保存完整的 API 文档，用于解析 $ref 引用
         self.api_doc = {}
+        
+        # 引用缓存 {url: content}
+        self.ref_cache = {}
 
         # 智能解析 URL
         self._parse_url()
 
-    def _is_blacklisted(self, method, path):
+    def _is_blacklisted(self, method: str, path: str) -> bool:
         """检查 API 是否在黑名单中"""
         if not self.blacklist_enabled:
             return False
@@ -134,7 +139,7 @@ class APIParser:
             # 如果没有找到 API 文档关键字，但有路径，可能是自定义前缀
             # 保持原样，让用户通过 -p 参数指定 API 文档路径
 
-    def parse(self):
+    def parse(self) -> List[Dict[str, Any]]:
         """解析 API 文档"""
         # 构造 API 文档 URL
         # 注意：custom_prefix 只作用于实际API请求，不影响获取API文档
@@ -192,7 +197,7 @@ class APIParser:
         console.print(f"[red]✗ 尝试了所有常见路径，均未找到有效的 API 文档[/red]")
         return []
 
-    def _try_parse_url(self, api_doc_url):
+    def _try_parse_url(self, api_doc_url: str) -> List[Dict[str, Any]]:
         """尝试解析指定的 URL
 
         Args:
@@ -343,7 +348,7 @@ class APIParser:
             # 其他错误，静默返回
             return []
     
-    def _parse_swagger_v2(self, api_doc):
+    def _parse_swagger_v2(self, api_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         """解析 Swagger 2.0 文档"""
         apis = []
         paths = api_doc.get('paths', {})
@@ -433,7 +438,7 @@ class APIParser:
 
         return apis
     
-    def _parse_openapi_v3(self, api_doc):
+    def _parse_openapi_v3(self, api_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         """解析 OpenAPI 3.0 文档"""
         apis = []
         paths = api_doc.get('paths', {})
@@ -497,47 +502,163 @@ class APIParser:
 
         return apis
     
-    def _resolve_ref(self, ref_path):
+    def _resolve_ref(self, ref_path: str) -> Optional[Any]:
         """解析 $ref 引用
-
+        
         Args:
-            ref_path: 引用路径，如 "#/components/parameters/entryGroupBy"
-
+            ref_path: 引用路径，如 "#/components/parameters/entryGroupBy" 
+                     或 "http://example.com/schema.json#/definitions/User"
+            
         Returns:
             解析后的对象，如果解析失败返回 None
         """
-        if not ref_path or not ref_path.startswith('#/'):
-            logger.debug(f"⚠️  无效的引用路径: {ref_path}")
+        if not ref_path or not isinstance(ref_path, str):
+            logger.debug(f"⚠️  无效的引用路径类型: {type(ref_path)}")
             return None
 
-        # 检查 api_doc 是否已初始化
-        if not self.api_doc:
-            logger.warning(f"⚠️  API文档未初始化，无法解析引用: {ref_path}")
+        # 1. 处理内部引用
+        if ref_path.startswith('#/'):
+            return self._resolve_internal_ref(ref_path, self.api_doc)
+            
+        # 2. 处理外部引用
+        # 分离 URL 和 Fragment
+        if '#' in ref_path:
+            url_part, fragment_part = ref_path.split('#', 1)
+            fragment_part = '#' + fragment_part
+        else:
+            url_part = ref_path
+            fragment_part = ''
+            
+        # 如果是相对路径，转换为绝对 URL
+        if not (url_part.startswith('http://') or url_part.startswith('https://') or url_part.startswith('file://')):
+            # 假设是相对于当前 API 文档的路径
+            # 注意：这里简单地使用 base_url + api_path 的目录作为基准
+            # 更严谨的做法是记录当前解析文档的 URL，但目前架构只支持单入口文档
+            current_doc_url = urljoin(self.base_url, self.api_path)
+            # 获取目录部分
+            base_dir = current_doc_url.rsplit('/', 1)[0] + '/'
+            url_part = urljoin(base_dir, url_part)
+            
+        # 获取外部文档内容
+        external_doc = self._fetch_ref_content(url_part)
+        if not external_doc:
             return None
+            
+        # 如果有 Fragment，在外部文档中解析
+        if fragment_part:
+            return self._resolve_internal_ref(fragment_part, external_doc)
+        
+        # 如果没有 Fragment，直接返回整个文档
+        return external_doc
 
-        # 移除开头的 #/
-        path_parts = ref_path[2:].split('/')
-        logger.debug(f"🔍 解析引用: {ref_path}, 路径部分: {path_parts}")
-
-        # 从文档根开始遍历
-        current = self.api_doc
-        for i, part in enumerate(path_parts):
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-                logger.debug(f"   ✓ 找到部分 [{i}]: {part}")
+    def _fetch_ref_content(self, url: str) -> Optional[Any]:
+        """获取外部引用内容（带缓存）"""
+        if url in self.ref_cache:
+            return self.ref_cache[url]
+            
+        logger.debug(f"📡 获取外部引用: {url}")
+        
+        try:
+            if url.startswith('file://'):
+                # 处理本地文件
+                file_path = url[7:]
+                # 安全检查：确保文件在允许的范围内（这里简单检查是否存在）
+                import os
+                if not os.path.exists(file_path):
+                    logger.warning(f"⚠️  引用文件不存在: {file_path}")
+                    return None
+                    
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                # 尝试解析 JSON/YAML
+                try:
+                    if url.endswith('.yaml') or url.endswith('.yml'):
+                        doc = yaml.safe_load(content)
+                    else:
+                        doc = json.loads(content)
+                except Exception:
+                    # 如果扩展名不匹配，尝试两种解析
+                    try:
+                        doc = json.loads(content)
+                    except:
+                        try:
+                            doc = yaml.safe_load(content)
+                        except:
+                            logger.warning(f"⚠️  无法解析引用文件内容: {url}")
+                            return None
+                            
             else:
-                if isinstance(current, dict):
-                    available_keys = list(current.keys())[:5]  # 只显示前5个键
-                    logger.warning(f"⚠️  无法解析引用 {ref_path} 在部分 '{part}'")
-                    logger.warning(f"   当前层级可用的键: {available_keys}...")
+                # 处理 HTTP/HTTPS
+                response = requests.get(
+                    url, 
+                    timeout=self.timeout, 
+                    verify=self.verify_ssl,
+                    headers={'User-Agent': 'FuzzHound/1.0'}
+                )
+                response.raise_for_status()
+                
+                # 解析内容
+                content_type = response.headers.get('Content-Type', '').lower()
+                if 'yaml' in content_type or url.endswith('.yaml') or url.endswith('.yml'):
+                    doc = yaml.safe_load(response.text)
                 else:
-                    logger.warning(f"⚠️  无法解析引用 {ref_path}，当前对象不是字典: {type(current)}")
-                return None
+                    try:
+                        doc = response.json()
+                    except:
+                        doc = yaml.safe_load(response.text)
+                        
+            # 存入缓存
+            self.ref_cache[url] = doc
+            return doc
+            
+        except Exception as e:
+            logger.warning(f"⚠️  获取外部引用失败 {url}: {e}")
+            return None
 
-        logger.debug(f"   ✓ 成功解析引用: {ref_path}")
-        return current
+    def _resolve_internal_ref(self, ref_path: str, doc: Any) -> Optional[Any]:
+        """解析文档内部引用"""
+        if not ref_path.startswith('#/'):
+            return None
+            
+        if not doc:
+            return None
 
-    def _ensure_path_parameters(self, path, parameters):
+        try:
+            # 移除开头的 #/
+            path_parts = ref_path[2:].split('/')
+            # 过滤空路径部分
+            path_parts = [p for p in path_parts if p]
+            
+            current = doc
+            for part in path_parts:
+                # 处理数组索引
+                if isinstance(current, list) and part.isdigit():
+                    idx = int(part)
+                    if 0 <= idx < len(current):
+                        current = current[idx]
+                        continue
+                    else:
+                        return None
+
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    if isinstance(current, dict):
+                        # 尝试 URL 解码
+                        from urllib.parse import unquote
+                        decoded_part = unquote(part)
+                        if decoded_part in current:
+                            current = current[decoded_part]
+                            continue
+                    return None
+
+            return current
+            
+        except Exception:
+            return None
+
+    def _ensure_path_parameters(self, path: str, parameters: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
         """确保路径中的所有参数都有定义
 
         从路径中提取 {paramName} 占位符，如果在 parameters['path'] 中没有定义，
@@ -571,20 +692,29 @@ class APIParser:
                     logger.warning(f"⚠️  跳过空参数名，路径: {path}")
                     continue
 
+                # 根据参数名推断类型
+                param_type = 'string'
+                name_lower = param_name.lower()
+                
+                if any(k in name_lower for k in ['id', 'count', 'limit', 'offset', 'page', 'num', 'age', 'year', 'month', 'day']):
+                    param_type = 'integer'
+                elif any(k in name_lower for k in ['is_', 'has_', 'enable', 'disable', 'active']):
+                    param_type = 'boolean'
+                
                 param_info = {
                     'name': param_name,
-                    'type': 'string',  # 默认为字符串类型
+                    'type': param_type,
                     'required': True,  # 路径参数通常是必需的
                     'description': f'Path parameter {param_name}',
                     'default': None,
                     'schema': {}
                 }
                 parameters['path'].append(param_info)
-                logger.debug(f"   ✓ 为参数 '{param_name}' 创建默认定义")
+                logger.debug(f"   ✓ 为参数 '{param_name}' 创建默认定义 (推断类型: {param_type})")
 
         return parameters
 
-    def _parse_parameters_v2(self, parameters):
+    def _parse_parameters_v2(self, parameters: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
         """解析 Swagger 2.0 参数"""
         parsed_params = {
             'path': [],
@@ -626,7 +756,7 @@ class APIParser:
 
         return parsed_params
     
-    def _parse_parameters_v3(self, details):
+    def _parse_parameters_v3(self, details: Dict[str, Any]) -> Dict[str, List[Any]]:
         """解析 OpenAPI 3.0 参数"""
         parsed_params = {
             'path': [],
@@ -691,7 +821,7 @@ class APIParser:
 
         return parsed_params
 
-    def _resolve_schema(self, schema):
+    def _resolve_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """解析 schema，如果包含 $ref 则解析引用
 
         Args:
@@ -706,7 +836,7 @@ class APIParser:
                 return ref_schema
         return schema
 
-    def _get_type_from_schema(self, schema):
+    def _get_type_from_schema(self, schema: Dict[str, Any]) -> str:
         """从 schema 中获取类型"""
         if 'type' in schema:
             return schema['type']
@@ -719,7 +849,7 @@ class APIParser:
             return 'object'
         return 'string'
 
-    def _get_content_types_v3(self, details, key):
+    def _get_content_types_v3(self, details: Dict[str, Any], key: str) -> List[str]:
         """获取 OpenAPI 3.0 的 content types"""
         content_types = []
 

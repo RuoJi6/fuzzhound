@@ -2,26 +2,24 @@
 # -*- coding: utf-8 -*-
 """
 请求发送模块
-发送 HTTP 请求并记录响应
+发送 HTTP 请求并记录响应 (AsyncIO 版本)
 """
 
-import requests
+import asyncio
+import aiohttp
 import time
 import json
-import urllib3
 import logging
+import ssl
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import urlencode
-
-# 禁用 SSL 警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from urllib.parse import urlencode, urlparse
 
 logger = logging.getLogger('fuzzhound.request_sender')
 
 
 class RequestSender:
-    """请求发送器"""
+    """请求发送器 (AsyncIO)"""
     
     def __init__(self, config):
         self.config = config
@@ -43,22 +41,49 @@ class RequestSender:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
 
         # 配置代理
-        self.proxies = None
+        self.proxy = None
         proxy_config = config.get('proxy', {})
         if proxy_config.get('enabled', False):
-            self.proxies = {}
+            # aiohttp 只支持单个代理 URL，通常使用 http 代理即可处理 https 请求
             if proxy_config.get('http'):
-                self.proxies['http'] = proxy_config['http']
-            if proxy_config.get('https'):
-                self.proxies['https'] = proxy_config['https']
+                self.proxy = proxy_config['http']
+            elif proxy_config.get('https'):
+                self.proxy = proxy_config['https']
 
-        # 创建 session
-        self.session = requests.Session()
-        if self.proxies:
-            self.session.proxies.update(self.proxies)
+        # SSL 上下文
+        self.ssl_context = ssl.create_default_context()
+        if not self.verify_ssl:
+            self.ssl_context.check_hostname = False
+            self.ssl_context.verify_mode = ssl.CERT_NONE
+
+        # Session 将在 enter_context 中创建，或者在第一次发送时创建
+        self.session = None
         
-    def send(self, request_data):
-        """发送请求"""
+    async def __aenter__(self):
+        """上下文管理器入口"""
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        connector = aiohttp.TCPConnector(ssl=self.ssl_context, limit=0) # limit=0 禁用连接池限制，由外部控制并发
+        self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器出口"""
+        if self.session:
+            await self.session.close()
+
+    async def close(self):
+        """关闭 session"""
+        if self.session:
+            await self.session.close()
+
+    async def send(self, request_data):
+        """发送请求 (异步)"""
+        if not self.session:
+            # 如果没有使用上下文管理器，临时创建一个 session (不推荐，性能较差)
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+            connector = aiohttp.TCPConnector(ssl=self.ssl_context, limit=0)
+            self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+
         method = request_data['method']
         url = request_data['url']
         headers = request_data.get('headers', {})
@@ -73,14 +98,13 @@ class RequestSender:
 
         # 延迟
         if self.delay > 0:
-            time.sleep(self.delay)
+            await asyncio.sleep(self.delay)
 
         # 准备请求数据
         kwargs = {
-            'timeout': self.timeout,
-            'verify': self.verify_ssl,
             'headers': headers,
-            'params': params
+            'params': params,
+            'proxy': self.proxy
         }
         
         # 处理请求体
@@ -92,7 +116,9 @@ class RequestSender:
             elif 'application/x-www-form-urlencoded' in content_type:
                 kwargs['data'] = body
             elif 'multipart/form-data' in content_type:
-                kwargs['files'] = body
+                # aiohttp 处理 multipart 比较特殊，这里简化处理，假设 body 是 FormData
+                # 如果 body 是 dict，aiohttp 会自动处理为 form-data
+                kwargs['data'] = body
             else:
                 kwargs['data'] = body
         
@@ -100,44 +126,54 @@ class RequestSender:
         response = None
         error = None
         start_time = time.time()
+        resp_content = b''
+        resp_text = ''
+        status_code = 0
+        resp_headers = {}
 
         for attempt in range(self.retry + 1):
             try:
-                response = self.session.request(method, url, **kwargs)
-                # 请求成功，即使状态码是 4xx 或 5xx 也不算异常
-                break
-            except requests.exceptions.RequestException as e:
+                async with self.session.request(method, url, **kwargs) as resp:
+                    status_code = resp.status
+                    resp_headers = dict(resp.headers)
+                    # 读取响应内容
+                    resp_content = await resp.read()
+                    try:
+                        resp_text = resp_content.decode('utf-8', errors='replace')
+                    except:
+                        resp_text = str(resp_content)
+                    
+                    # 请求成功
+                    response = resp # 仅用于标记成功
+                    break
+            except Exception as e:
                 error = str(e)
                 if attempt < self.retry:
-                    time.sleep(1)
+                    await asyncio.sleep(1)
                     continue
 
         end_time = time.time()
         elapsed_time = end_time - start_time
 
         # 构造结果
-        # 注意：只有在网络异常（response 为 None）时才显示状态码 0
-        # 如果请求成功但返回 4xx/5xx，应该显示真实的状态码
-        # 重要：必须使用 "is not None" 而不是 "if response"，因为 Response 对象的 __bool__
-        # 方法在状态码为 4xx/5xx 时返回 False
         result = {
             'request': request_data,
             'method': method,
             'url': url,
-            'status_code': response.status_code if response is not None else 0,
-            'response_length': len(response.content) if response is not None else 0,
+            'status_code': status_code,
+            'response_length': len(resp_content),
             'response_time': elapsed_time,
-            'response_headers': dict(response.headers) if response is not None else {},
-            'response_body': self._get_response_body(response) if response is not None else '',
+            'response_headers': resp_headers,
+            'response_body': self._parse_response_body(resp_text, resp_headers),
             'error': error,
-            'success': response is not None and response.status_code < 400,
+            'success': response is not None and status_code < 400,
             'raw_request': self._build_raw_request(method, url, headers, params, body),
-            'raw_response': self._build_raw_response(response) if response is not None else ''
+            'raw_response': self._build_raw_response(status_code, resp_headers, resp_text) if response is not None else ''
         }
 
         # 记录响应信息
         if response is not None:
-            logger.debug(f"📥 收到响应: {response.status_code} ({len(response.content)} bytes, {elapsed_time:.2f}s)")
+            logger.debug(f"📥 收到响应: {status_code} ({len(resp_content)} bytes, {elapsed_time:.2f}s)")
         else:
             logger.debug(f"❌ 请求失败: {error}")
 
@@ -175,21 +211,19 @@ class RequestSender:
         except Exception as e:
             logger.error(f"保存调试信息失败: {e}")
     
-    def _get_response_body(self, response):
-        """获取响应体"""
+    def _parse_response_body(self, text, headers):
+        """解析响应体"""
         try:
-            content_type = response.headers.get('Content-Type', '')
+            content_type = headers.get('Content-Type', '')
             if 'application/json' in content_type:
-                return response.json()
+                return json.loads(text)
             else:
-                return response.text
+                return text
         except:
-            return response.text
+            return text
     
     def _build_raw_request(self, method, url, headers, params, body):
-        """构造原始请求包"""
-        from urllib.parse import urlparse, parse_qs
-        
+        """构造原始请求包 (用于展示)"""
         parsed_url = urlparse(url)
         
         # 构造请求行
@@ -223,25 +257,29 @@ class RequestSender:
         
         return "\n".join(lines)
     
-    def _build_raw_response(self, response):
-        """构造原始响应包"""
-        lines = [f"HTTP/1.1 {response.status_code} {response.reason}"]
+    def _build_raw_response(self, status_code, headers, body_text):
+        """构造原始响应包 (用于展示)"""
+        # 简单的状态码原因映射
+        reasons = {200: 'OK', 404: 'Not Found', 500: 'Internal Server Error'}
+        reason = reasons.get(status_code, 'Unknown')
+        
+        lines = [f"HTTP/1.1 {status_code} {reason}"]
         
         # 添加响应头
-        for key, value in response.headers.items():
+        for key, value in headers.items():
             lines.append(f"{key}: {value}")
         
         lines.append("")
         
         # 添加响应体
         try:
-            content_type = response.headers.get('Content-Type', '')
+            content_type = headers.get('Content-Type', '')
             if 'application/json' in content_type:
-                body_str = json.dumps(response.json(), ensure_ascii=False, indent=2)
+                body_str = json.dumps(json.loads(body_text), ensure_ascii=False, indent=2)
             else:
-                body_str = response.text[:1000]  # 限制长度
+                body_str = body_text[:1000]  # 限制长度
         except:
-            body_str = response.text[:1000]
+            body_str = body_text[:1000]
         
         lines.append(body_str)
         

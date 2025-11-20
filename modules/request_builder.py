@@ -10,6 +10,7 @@ import random
 import os
 import logging
 from urllib.parse import urljoin
+from typing import List, Dict, Any, Optional, Union, Tuple
 from modules.utils import generate_test_value, create_test_file
 
 logger = logging.getLogger('fuzzhound.request_builder')
@@ -649,7 +650,8 @@ class RequestBuilder:
             schema = body_param.get('schema', {})
             
             if 'application/json' in content_type:
-                body = self._generate_body_from_schema(schema)
+                # 使用 set 跟踪已访问的引用，防止循环递归
+                body = self._generate_body_from_schema(schema, depth=0, max_depth=5)
                 headers['Content-Type'] = 'application/json'
             elif 'application/x-www-form-urlencoded' in content_type:
                 body = {}
@@ -705,9 +707,23 @@ class RequestBuilder:
             'fuzz_type': 'normal'
         }
     
-    def _generate_body_from_schema(self, schema):
-        """从 schema 生成请求体"""
+    def _generate_body_from_schema(self, schema: Dict[str, Any], depth: int = 0, max_depth: int = 5) -> Any:
+        """从 schema 生成请求体
+        
+        Args:
+            schema: Schema 定义
+            depth: 当前递归深度
+            max_depth: 最大递归深度，防止无限递归
+            
+        Returns:
+            生成的数据
+        """
         if not schema:
+            return {}
+
+        # 防止递归过深
+        if depth > max_depth:
+            logger.debug(f"⚠️  达到最大递归深度 ({max_depth})，停止展开")
             return {}
 
         schema_type = schema.get('type', 'object')
@@ -722,12 +738,17 @@ class RequestBuilder:
 
                 # 只生成必需字段或简单字段
                 if prop_name in required or prop_type in ['string', 'integer', 'number', 'boolean']:
-                    body[prop_name] = generate_test_value(prop_type, prop_name, self.config)
+                    # 对于对象或数组类型的属性，递归生成
+                    if prop_type in ['object', 'array']:
+                        body[prop_name] = self._generate_body_from_schema(prop_schema, depth + 1, max_depth)
+                    else:
+                        body[prop_name] = generate_test_value(prop_type, prop_name, self.config)
 
             return body
         elif schema_type == 'array':
             items_schema = schema.get('items', {})
-            return [self._generate_body_from_schema(items_schema)]
+            # 生成一个包含单个元素的数组
+            return [self._generate_body_from_schema(items_schema, depth + 1, max_depth)]
         else:
             return generate_test_value(schema_type, '', self.config)
 
