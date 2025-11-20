@@ -25,19 +25,25 @@ console = Console()
 
 def main():
     """主函数"""
-    
+
     # 创建参数解析器并解析参数
     parser = create_argument_parser()
+
+    # 如果没有提供任何参数，显示帮助信息
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     args = parser.parse_args()
-    
+
     # 打印 Banner
     print_banner()
-    
+
     # 加载配置
     config = load_config(args.config)
     if not validate_config(config):
         sys.exit(1)
-    
+
     # 合并命令行参数到配置
     config = merge_cli_args(config, args)
     
