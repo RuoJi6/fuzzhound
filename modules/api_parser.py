@@ -402,6 +402,11 @@ class APIParser:
                 if method.upper() not in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']:
                     continue
 
+                # 检查 details 是否为字典（某些不标准的 API 文档可能直接是字符串）
+                if not isinstance(details, dict):
+                    logger.warning(f"⚠️  跳过非标准格式的 API: {method.upper()} {path} (details 不是字典)")
+                    continue
+
                 # 获取标题：优先使用 summary，其次 operationId，最后为空
                 summary = details.get('summary', '') or details.get('operationId', '')
 
@@ -466,6 +471,11 @@ class APIParser:
         for path, methods in paths.items():
             for method, details in methods.items():
                 if method.upper() not in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']:
+                    continue
+
+                # 检查 details 是否为字典（某些不标准的 API 文档可能直接是字符串）
+                if not isinstance(details, dict):
+                    logger.warning(f"⚠️  跳过非标准格式的 API: {method.upper()} {path} (details 不是字典)")
                     continue
 
                 # 获取标题：优先使用 summary，其次 operationId，最后为空

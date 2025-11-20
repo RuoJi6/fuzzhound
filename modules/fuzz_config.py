@@ -178,6 +178,20 @@ def process_fuzz_args(config, args):
             except ValueError:
                 console.print(f"[red]❌ 错误：--fuzz-filter 参数格式错误，应为逗号分隔的数字（如: 200,403）或 'all'[/red]")
                 sys.exit(1)
+    
+    # 处理 Fuzz 级别筛选参数
+    if hasattr(args, 'fuzz_level') and args.fuzz_level:
+        if 'fuzz_detection' not in config:
+            config['fuzz_detection'] = {}
+        
+        config['fuzz_detection']['level_filter'] = args.fuzz_level
+        
+        level_desc = {
+            'likely': '只显示高度可疑的结果（🚨/🎯）',
+            'possible': '显示可能有效及以上的结果（⚠️ + 🚨/🎯）',
+            'all': '显示所有级别的结果（包括 ❌）'
+        }
+        console.print(f"[yellow]📢 Fuzz级别筛选：{level_desc.get(args.fuzz_level, args.fuzz_level)}[/yellow]")
 
     return config
 

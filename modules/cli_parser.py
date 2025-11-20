@@ -161,6 +161,9 @@ def create_argument_parser():
   {GREEN}# 数字型 Fuzz（检测 IDOR 漏洞）{END}
   python3 fuzzhound.py -u http://example.com/api-docs --fnumber 1-10000
 
+  {GREEN}# 只显示高度可疑的 Fuzz 结果{END}
+  python3 fuzzhound.py -u http://example.com/api-docs --fall --fuzz-level likely
+
   {GREEN}# 使用 --prefix 和 --ignore-basepath{END}
   {GREEN}# API文档: http://example.com/base-service/;/v2/api-docs (basePath: /bs-service){END}
   {GREEN}# 实际API: http://example.com/base-service/api/user/list{END}
@@ -205,6 +208,7 @@ def create_argument_parser():
     fuzz_group.add_argument('--sql-payloads', metavar='N', type=int, help='SQL注入每个参数测试的payload数量（仅在smart模式生效，覆盖默认的20个）')
     fuzz_group.add_argument('--fuzz-status', metavar='CODES', help='Fuzz结果状态码筛选，只显示指定状态码的结果（逗号分隔，如: 200,500,403）。默认: 200,500,403,401,302。使用 "all" 显示所有状态码')
     fuzz_group.add_argument('--fuzz-filter', metavar='CODES', help='Fuzz前置筛选，只对指定状态码的API进行Fuzz测试（逗号分隔，如: 200,403）。默认: all（所有API都进行Fuzz）')
+    fuzz_group.add_argument('--fuzz-level', metavar='LEVEL', choices=['likely', 'possible', 'all'], default='possible', help='Fuzz检测级别筛选：likely(只显示高度可疑🚨/🎯)、possible(显示可能有效及以上⚠️+🚨，默认)、all(显示所有级别包括❌)')
 
     # 默认值参数组
     default_group = parser.add_argument_group('🎲 默认值选项')

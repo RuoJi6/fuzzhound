@@ -73,8 +73,16 @@ def calculate_total_requests(apis, config):
     total_enum_requests = 0
     has_enum_params = False
     double_check = config['request'].get('double_check', True)
+    
+    # 获取黑名单配置
+    blacklist_config = config.get('blacklist', {})
+    ignore_blacklist = blacklist_config.get('ignore_blacklist', False)
 
     for api in apis:
+        # 跳过黑名单 API（除非忽略黑名单）
+        if api.get('is_blacklisted', False) and not ignore_blacklist:
+            continue
+            
         # 获取枚举参数测试限制
         enum_test_limit = config.get('request', {}).get('enum_test_limit', 0)
 
@@ -161,6 +169,7 @@ async def execute_fuzz_tests_async(config, apis, request_builder, request_sender
     # 收集所有 Fuzz 请求
     all_fuzz_requests = []
     filtered_apis_count = 0
+    status_zero_filtered = 0  # 新增：记录状态码为0的API数量
 
     for api in apis:
         blacklist_config = config.get('blacklist', {})
@@ -169,9 +178,15 @@ async def execute_fuzz_tests_async(config, apis, request_builder, request_sender
         if api.get('is_blacklisted', False) and not ignore_blacklist:
             continue
 
+        api_key = f"{api.get('method', 'GET')}:{api.get('path', '')}"
+        api_status = api_status_map.get(api_key, 0)
+        
+        # 自动排除状态码为0的API（连接失败/超时等）
+        if api_status == 0:
+            status_zero_filtered += 1
+            continue
+        
         if fuzz_filter_codes:
-            api_key = f"{api.get('method', 'GET')}:{api.get('path', '')}"
-            api_status = api_status_map.get(api_key, 0)
             if api_status not in fuzz_filter_codes:
                 filtered_apis_count += 1
                 continue
@@ -179,6 +194,8 @@ async def execute_fuzz_tests_async(config, apis, request_builder, request_sender
         fuzz_requests_list = request_builder.build_fuzz_requests(api)
         all_fuzz_requests.extend(fuzz_requests_list)
 
+    if status_zero_filtered > 0:
+        console.print(f"[dim cyan]📊 已自动排除 {status_zero_filtered} 个状态码为0的API（连接失败/不可达）[/dim cyan]")
     if filtered_apis_count > 0:
         console.print(f"[yellow]📊 已筛选掉 {filtered_apis_count} 个不符合状态码条件的API[/yellow]")
 
@@ -248,6 +265,21 @@ async def execute_fuzz_tests_async(config, apis, request_builder, request_sender
                         status_code = result.get('status_code', 0)
                         if status_code not in filter_status_codes:
                             should_print = False
+                
+                # 应用级别筛选
+                if should_print and result.get('fuzz_analysis'):
+                    level_filter = config.get('fuzz_detection', {}).get('level_filter', 'possible')
+                    analysis_level = result['fuzz_analysis'].get('level', 'unlikely')
+                    
+                    if level_filter == 'likely':
+                        # 只显示 likely
+                        if analysis_level != 'likely':
+                            should_print = False
+                    elif level_filter == 'possible':
+                        # 显示 possible 和 likely
+                        if analysis_level not in ['possible', 'likely']:
+                            should_print = False
+                    # level_filter == 'all' 时显示所有
 
                 if should_print:
                     # 使用 print_lock 保护打印

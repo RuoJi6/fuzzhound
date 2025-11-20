@@ -171,23 +171,35 @@ def create_fuzz_test_handler(config, request_sender, reporter, fuzz_detector,
                 }
                 risk_score = sql_detector.calculate_risk_score(detection_result)
 
-                # 如果检测到SQL注入迹象，添加分析结果
-                if risk_score > 0:
-                    result['fuzz_analysis'] = {
-                        'level': 'likely' if risk_score >= 50 else 'possible',
-                        'icon': '🚨' if risk_score >= 50 else '⚠️',
-                        'label': 'SQL注入漏洞' if risk_score >= 50 else '可能存在SQL注入',
-                        'score': risk_score,
-                        'reasons': []
-                    }
+                # 始终添加分析结果（即使 risk_score = 0），以便级别筛选能正常工作
+                if risk_score >= 50:
+                    level = 'likely'
+                    icon = '🚨'
+                    label = 'SQL注入漏洞'
+                elif risk_score > 0:
+                    level = 'possible'
+                    icon = '⚠️'
+                    label = '可能存在SQL注入'
+                else:
+                    level = 'unlikely'
+                    icon = '❌'
+                    label = '可能无效'
 
-                    # 添加检测原因
-                    if has_sql_error:
-                        result['fuzz_analysis']['reasons'].append(f'检测到SQL错误 ({len(matched_errors)}个特征)')
-                    if diff_result.get('significant_diff'):
-                        result['fuzz_analysis']['reasons'].append(f'响应长度差异 ({diff_result.get("length_diff", 0)}字节)')
-                    if diff_result.get('status_code_diff'):
-                        result['fuzz_analysis']['reasons'].append('状态码变化')
+                result['fuzz_analysis'] = {
+                    'level': level,
+                    'icon': icon,
+                    'label': label,
+                    'score': risk_score,
+                    'reasons': []
+                }
+
+                # 添加检测原因
+                if has_sql_error:
+                    result['fuzz_analysis']['reasons'].append(f'检测到SQL错误 ({len(matched_errors)}个特征)')
+                if diff_result.get('significant_diff'):
+                    result['fuzz_analysis']['reasons'].append(f'响应长度差异 ({diff_result.get("length_diff", 0)}字节)')
+                if diff_result.get('status_code_diff'):
+                    result['fuzz_analysis']['reasons'].append('状态码变化')
 
             # 其他类型的Fuzz检测
             elif any_fuzz_enabled and fuzz_type in ['username_fuzz', 'password_fuzz', 'number_fuzz']:

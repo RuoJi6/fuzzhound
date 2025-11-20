@@ -290,53 +290,119 @@ class Reporter:
 
         # 如果有 Fuzz 分析结果，显示统计
         if any(fuzz_analysis_results.values()):
-            console.print(f"\n[cyan]Fuzz 检测结果:[/cyan]")
+            level_filter = self.config.get('fuzz_detection', {}).get('level_filter', 'possible')
+
+            console.print(f"\n[cyan]Fuzz 检测结果（全部）:[/cyan]")
             console.print(f"  🎯 高度可疑: {fuzz_analysis_results['likely']}")
             console.print(f"  ⚠️  可能有效: {fuzz_analysis_results['possible']}")
             console.print(f"  ❌ 可能无效: {fuzz_analysis_results['unlikely']}")
 
+            # 如果应用了级别筛选，显示提示
+            if level_filter != 'all':
+                level_desc = {
+                    'likely': '只保存高度可疑（🚨/🎯）',
+                    'possible': '保存可能有效及以上（⚠️ + 🚨/🎯）'
+                }
+                console.print(f"\n[yellow]📢 级别筛选: {level_desc.get(level_filter, level_filter)}的结果到报告文件[/yellow]")
+
             # 显示高价值发现
             if fuzz_findings:
-                console.print(f"\n[yellow bold]🔍 高价值发现:[/yellow bold]")
-                for finding in fuzz_findings[:10]:  # 最多显示10个
-                    fuzz_type_name = {
-                        'username_fuzz': '用户名',
-                        'password_fuzz': '密码',
-                        'number_fuzz': '数字',
-                        'sql_fuzz': 'SQL注入'
-                    }.get(finding['fuzz_type'], finding['fuzz_type'])
+                filtered_findings = fuzz_findings
+                if level_filter == 'likely':
+                    filtered_findings = [f for f in fuzz_findings if f['level'] == 'likely']
+                elif level_filter == 'possible':
+                    filtered_findings = [f for f in fuzz_findings if f['level'] in ['possible', 'likely']]
+                # level_filter == 'all' 时显示所有
 
-                    reasons_str = ', '.join(finding['reasons']) if finding['reasons'] else ''
-                    console.print(
-                        f"  {finding['icon']} [{finding['status_code']}] "
-                        f"[{fuzz_type_name}] {finding['fuzz_target']}={finding['fuzz_value']} "
-                        f"(评分: {finding['score']})"
-                    )
-                    if reasons_str:
-                        console.print(f"      原因: {reasons_str}")
-                    console.print(f"      URL: {finding['url']}")
-                if len(fuzz_findings) > 10:
-                    console.print(f"  ... 还有 {len(fuzz_findings) - 10} 个发现，详见报告")
+                if filtered_findings:
+                    level_desc = {
+                        'likely': '（只显示高度可疑🚨）',
+                        'possible': '（显示可能有效及以上⚠️+🚨）',
+                        'all': '（显示所有级别）'
+                    }
+                    console.print(f"\n[yellow bold]🔍 高价值发现{level_desc.get(level_filter, '')}:[/yellow bold]")
+                    for finding in filtered_findings[:10]:  # 最多显示10个
+                        fuzz_type_name = {
+                            'username_fuzz': '用户名',
+                            'password_fuzz': '密码',
+                            'number_fuzz': '数字',
+                            'sql_fuzz': 'SQL注入'
+                        }.get(finding['fuzz_type'], finding['fuzz_type'])
+
+                        reasons_str = ', '.join(finding['reasons']) if finding['reasons'] else ''
+                        console.print(
+                            f"  {finding['icon']} [{finding['status_code']}] "
+                            f"[{fuzz_type_name}] {finding['fuzz_target']}={finding['fuzz_value']} "
+                            f"(评分: {finding['score']})"
+                        )
+                        if reasons_str:
+                            console.print(f"      原因: {reasons_str}")
+                        console.print(f"      URL: {finding['url']}")
+                    if len(filtered_findings) > 10:
+                        console.print(f"  ... 还有 {len(filtered_findings) - 10} 个发现，详见报告")
+                elif level_filter != 'all':
+                    # 如果应用了筛选但没有符合条件的结果，提示用户
+                    console.print(f"\n[dim]💡 提示: 当前级别筛选为 '{level_filter}'，未发现符合条件的结果[/dim]")
+                    console.print(f"[dim]   使用 --fuzz-level all 查看所有级别的发现[/dim]")
 
         console.print("="*80 + "\n")
     
+    def _filter_results_by_level(self, results):
+        """根据 fuzz_level 配置过滤结果
+
+        Args:
+            results: 所有结果列表
+
+        Returns:
+            list: 过滤后的结果列表
+        """
+        level_filter = self.config.get('fuzz_detection', {}).get('level_filter', 'possible')
+
+        # 如果是 'all'，返回所有结果
+        if level_filter == 'all':
+            return results
+
+        filtered_results = []
+        for result in results:
+            # 非 Fuzz 结果（普通测试）始终保留
+            if not result.get('fuzz_analysis'):
+                filtered_results.append(result)
+                continue
+
+            # Fuzz 结果根据级别筛选
+            analysis_level = result['fuzz_analysis'].get('level', 'unlikely')
+
+            if level_filter == 'likely':
+                # 只保留 likely
+                if analysis_level == 'likely':
+                    filtered_results.append(result)
+            elif level_filter == 'possible':
+                # 保留 possible 和 likely
+                if analysis_level in ['possible', 'likely']:
+                    filtered_results.append(result)
+
+        return filtered_results
+
     def generate_html_report(self, results, apis):
         """生成 HTML 报告"""
         html_file = self.output_dir / self.config['output']['html_report']
 
+        # 应用级别筛选
+        filtered_results = self._filter_results_by_level(results)
+
         # 生成 HTML
-        html_content = self._generate_html(results, apis)
+        html_content = self._generate_html(filtered_results, apis)
 
         with open(html_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
 
         # 保存请求/响应包
         if self.save_requests or self.save_responses:
-            self._save_raw_data(results)
+            self._save_raw_data(filtered_results)
 
         # 生成 CSV 和 JSON 报告
-        self._generate_csv_report(results)
-        self._generate_json_report(results)
+        self._generate_csv_report(filtered_results)
+        self._generate_json_report(filtered_results)
     
     def _generate_html(self, results, apis):
         """生成 HTML 内容"""
@@ -475,6 +541,18 @@ class Reporter:
         .fuzz-username {{ background: #e83e8c; color: white; }}
         .badge-original {{ background: #6f42c1; color: white; }}
         .badge-with-params {{ background: #fd7e14; color: white; }}
+
+        .fuzz-level {{
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }}
+
+        .level-likely {{ background: #dc3545; color: white; }}
+        .level-possible {{ background: #ffc107; color: #000; }}
+        .level-unlikely {{ background: #6c757d; color: white; }}
 
         .param-info {{
             display: block;
@@ -731,6 +809,20 @@ class Reporter:
         <div class="header">
             <h1>🎯 API Fuzz 测试报告</h1>
             <p>生成时间: {timestamp}</p>
+"""
+
+        # 添加级别筛选信息
+        level_filter = self.config.get('fuzz_detection', {}).get('level_filter', 'possible')
+        if level_filter != 'all':
+            level_desc = {
+                'likely': '只保存高度可疑（🚨/🎯）',
+                'possible': '保存可能有效及以上（⚠️ + 🚨/🎯）'
+            }
+            html += f"""
+            <p style="margin-top: 10px; font-size: 0.95em;">📢 级别筛选: {level_desc.get(level_filter, level_filter)}的结果</p>
+"""
+
+        html += """
         </div>
 
         <div class="summary">
@@ -788,6 +880,7 @@ class Reporter:
                         <th>方法</th>
                         <th>URL</th>
                         <th>描述</th>
+                        <th>Fuzz级别</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -843,6 +936,18 @@ class Reporter:
             if param_info:
                 description_html += f'<div class="param-info"><strong>📝 参数详情:</strong> {self._escape_html(param_info)}</div>'
 
+            # 获取 Fuzz 级别信息
+            fuzz_level_html = '-'
+            if result.get('fuzz_analysis'):
+                analysis = result['fuzz_analysis']
+                level = analysis.get('level', 'unlikely')
+                label = analysis.get('label', '')
+                icon = analysis.get('icon', '')
+                score = analysis.get('score', 0)
+
+                level_class = f'level-{level}'
+                fuzz_level_html = f'<span class="fuzz-level {level_class}">{icon} {label} ({score}分)</span>'
+
             # 生成 cURL 命令
             curl_cmd = self._generate_curl_command(result['request'])
 
@@ -868,6 +973,7 @@ class Reporter:
                         <td><span class="method method-{method}">{method}</span>{fuzz_badge}</td>
                         <td style="word-break: break-all;">{self._escape_html(url)}</td>
                         <td>{description_html}</td>
+                        <td>{fuzz_level_html}</td>
                         <td><button class="toggle-btn" onclick="showDetails(this)">查看详情</button></td>
                     </tr>
 """
@@ -1129,7 +1235,7 @@ class Reporter:
             # 写入表头
             writer.writerow([
                 '状态码', '响应长度', '响应时间(ms)', '方法', 'URL',
-                '描述', '是否成功', '参数信息', 'Fuzz类型', '请求包', '响应包'
+                '描述', '是否成功', '参数信息', 'Fuzz类型', 'Fuzz级别', 'Fuzz评分', '请求包', '响应包'
             ])
 
             # 写入数据
@@ -1139,6 +1245,11 @@ class Reporter:
                 description = request_data.get('description', api.get('summary', ''))
                 param_info = request_data.get('param_info', '')
                 fuzz_type = request_data.get('fuzz_type', 'normal')
+
+                # 获取 Fuzz 分析信息
+                fuzz_analysis = result.get('fuzz_analysis', {})
+                fuzz_level = fuzz_analysis.get('label', '') if fuzz_analysis else ''
+                fuzz_score = fuzz_analysis.get('score', '') if fuzz_analysis else ''
 
                 writer.writerow([
                     result['status_code'],
@@ -1150,6 +1261,8 @@ class Reporter:
                     '是' if result['success'] else '否',
                     param_info,
                     fuzz_type,
+                    fuzz_level,
+                    fuzz_score,
                     result['raw_request'],
                     result['raw_response']
                 ])
@@ -1166,6 +1279,7 @@ class Reporter:
             'total': len(results),
             'success': sum(1 for r in results if r['success']),
             'failed': sum(1 for r in results if not r['success']),
+            'level_filter': self.config.get('fuzz_detection', {}).get('level_filter', 'possible'),
             'results': []
         }
 
@@ -1173,7 +1287,8 @@ class Reporter:
             request_data = result['request']
             api = request_data.get('api', {})
 
-            data['results'].append({
+            # 构建结果对象
+            result_obj = {
                 'status_code': result['status_code'],
                 'response_length': result['response_length'],
                 'response_time': result['response_time'],
@@ -1189,7 +1304,13 @@ class Reporter:
                 'raw_response': result['raw_response'],
                 'response_headers': result.get('response_headers', {}),
                 'response_body': result.get('response_body', '')
-            })
+            }
+
+            # 添加 Fuzz 分析信息（如果存在）
+            if result.get('fuzz_analysis'):
+                result_obj['fuzz_analysis'] = result['fuzz_analysis']
+
+            data['results'].append(result_obj)
 
         with open(json_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
