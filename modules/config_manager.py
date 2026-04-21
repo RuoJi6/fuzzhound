@@ -132,9 +132,11 @@ def merge_cli_args(config, args):
     
     # 处理代理参数
     if args.proxy:
-        if 'request' not in config:
-            config['request'] = {}
-        config['request']['proxy'] = args.proxy
+        if 'proxy' not in config:
+            config['proxy'] = {}
+        config['proxy']['enabled'] = True
+        config['proxy']['http'] = args.proxy
+        config['proxy']['https'] = args.proxy
         console.print(f"[yellow]📢 使用代理: {args.proxy}[/yellow]")
     
     # 处理黑名单参数
